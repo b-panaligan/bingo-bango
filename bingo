@@ -1,1 +1,111 @@
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.util.*;
 
+public class BingoGame extends JFrame {
+    private static final int SIZE = 5;
+    private JButton[][] buttons = new JButton[SIZE][SIZE];
+    private boolean[][] marked = new boolean[SIZE][SIZE];
+    private Set<Integer> calledNumbers = new HashSet<>();
+    private JLabel statusLabel = new JLabel("Press 'Call Number' to start!");
+    private JButton callNumberButton = new JButton("Call Number");
+    private Random random = new Random();
+    private int[][] numbers = new int[SIZE][SIZE];
+
+    public BingoGame() {
+        super("Bingo Game");
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setSize(500, 600);
+        setLayout(new BorderLayout());
+
+        JPanel boardPanel = new JPanel(new GridLayout(SIZE, SIZE));
+        initializeBoard(boardPanel);
+
+        callNumberButton.addActionListener(e -> callNumber());
+
+        JPanel controlPanel = new JPanel();
+        controlPanel.setLayout(new BorderLayout());
+        controlPanel.add(callNumberButton, BorderLayout.CENTER);
+        controlPanel.add(statusLabel, BorderLayout.SOUTH);
+
+        add(boardPanel, BorderLayout.CENTER);
+        add(controlPanel, BorderLayout.SOUTH);
+        setVisible(true);
+    }
+
+    private void initializeBoard(JPanel boardPanel) {
+        // Generate unique numbers for the Bingo card
+        List<Integer> nums = new ArrayList<>();
+        for (int i = 1; i <= SIZE * SIZE; i++) nums.add(i);
+        Collections.shuffle(nums);
+
+        for (int i = 0; i < SIZE; i++) {
+            for (int j = 0; j < SIZE; j++) {
+                numbers[i][j] = nums.remove(0);
+                buttons[i][j] = new JButton(String.valueOf(numbers[i][j]));
+                buttons[i][j].setFont(new Font("Arial", Font.BOLD, 22));
+                buttons[i][j].setEnabled(false); // User can't manually press
+                boardPanel.add(buttons[i][j]);
+            }
+        }
+        // Optional: Mark center as Free
+        buttons[2][2].setText("FREE");
+        buttons[2][2].setBackground(Color.GREEN);
+        marked[2][2] = true;
+    }
+
+    private void callNumber() {
+        if (calledNumbers.size() >= SIZE * SIZE) {
+            statusLabel.setText("All numbers have been called!");
+            return;
+        }
+        int num;
+        do {
+            num = random.nextInt(SIZE * SIZE) + 1;
+        } while (calledNumbers.contains(num));
+        calledNumbers.add(num);
+        statusLabel.setText("Called Number: " + num);
+
+        // Mark the board if number exists
+        for (int i = 0; i < SIZE; i++)
+            for (int j = 0; j < SIZE; j++) {
+                if (numbers[i][j] == num && !marked[i][j]) {
+                    buttons[i][j].setBackground(Color.YELLOW);
+                    marked[i][j] = true;
+                }
+            }
+        if (checkBingo()) {
+            statusLabel.setText("BINGO! You won!");
+            callNumberButton.setEnabled(false);
+        }
+    }
+
+    private boolean checkBingo() {
+        // Check rows
+        for (int i = 0; i < SIZE; i++) {
+            boolean row = true;
+            for (int j = 0; j < SIZE; j++)
+                if (!marked[i][j]) row = false;
+            if (row) return true;
+        }
+        // Check columns
+        for (int j = 0; j < SIZE; j++) {
+            boolean col = true;
+            for (int i = 0; i < SIZE; i++)
+                if (!marked[i][j]) col = false;
+            if (col) return true;
+        }
+        // Check diagonals
+        boolean diag1 = true, diag2 = true;
+        for (int i = 0; i < SIZE; i++) {
+            if (!marked[i][i]) diag1 = false;
+            if (!marked[i][SIZE - 1 - i]) diag2 = false;
+        }
+        return diag1 || diag2;
+    }
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> new BingoGame());
+    }
+}
