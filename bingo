@@ -2,14 +2,9 @@ package isu;
 
 import javax.swing.*;
 import javax.swing.Timer;
-
 import java.awt.*;
+import java.util.*;
 import java.util.List;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Random;
-import java.util.Set;
-import java.util.HashSet;
 
 public class BingoGame extends JFrame {
     private static final int SIZE = 5;
@@ -18,52 +13,77 @@ public class BingoGame extends JFrame {
     private Set<Integer> calledNumbers = new HashSet<>();
     private final String[] headers = {"B", "I", "N", "G", "O"};
     private int[][] numbers = new int[SIZE][SIZE];
-    private Timer autoCaller;
+
+    private Timer preGameCountdownTimer;
+    private Timer countdownTimer;
     private boolean gameOver = false;
     private JButton[] headerButtons = new JButton[SIZE];
-    private JButton statusButton = new JButton("Waiting for first call...");
+    private JLabel callStatusBar = new JLabel("Waiting for first call...", SwingConstants.CENTER);
+    private JLabel countdownStatusBar = new JLabel("", SwingConstants.CENTER);
     private JButton bingoButton = new JButton("BINGO!");
+    private JButton startOverButton = new JButton("Start Over");
+    private JPanel rightPanel; // for swapping buttons
+
+    // AI Opponent fields
+    private int[][] aiNumbers = new int[SIZE][SIZE];
+    private boolean[][] aiMarked = new boolean[SIZE][SIZE];
+    private boolean aiHasBingo = false;
+
+    // AI Card Window
+    private JFrame aiCardFrame;
+    private JLabel[][] aiCardLabels = new JLabel[SIZE][SIZE];
 
     // Game speed presets (milliseconds)
-    private static final int SPEED_BINGO = 2000;
-    private static final int NORMAL_BINGO = 5000;
-    private static final int TURTLE_BINGO = 8000;
+    private static final int SPEED_BINGO = 3000;
+    private static final int NORMAL_BINGO = 6000;
+    private static final int TURTLE_BINGO = 9000;
+
+    private int interval = NORMAL_BINGO;
+    private int lastCalledNumber = -1;
+    private String lastCalledLabel = "";
+    private int countdownValue = 0;
 
     public BingoGame() {
         super("Bingo Game");
+        setupUI();
+        resetGame();
+    }
 
-        // Ask for speed before continuing
-        int interval = promptForSpeed();
-        if (interval == -1) {
-            System.exit(0);
-        }
-
+    private void setupUI() {
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setSize(688, 900);
+        setSize(688, 950);
         setLayout(new BorderLayout());
 
-        JPanel boardPanel = new JPanel(new GridLayout(SIZE + 1, SIZE)); // +1 for header row
+        JPanel boardPanel = new JPanel(new GridLayout(SIZE + 1, SIZE));
         initializeBoard(boardPanel);
 
-        JPanel controlPanel = new JPanel(new BorderLayout());
-        statusButton.setFont(new Font("Arial", Font.BOLD, 20));
-        statusButton.setEnabled(false);
+        callStatusBar.setFont(new Font("Arial", Font.BOLD, 22));
+        callStatusBar.setForeground(Color.BLACK);
+        countdownStatusBar.setFont(new Font("Arial", Font.BOLD, 20));
+        countdownStatusBar.setForeground(Color.BLUE);
 
+        JPanel statusPanel = new JPanel(new GridLayout(2, 1));
+        statusPanel.add(callStatusBar);
+        statusPanel.add(countdownStatusBar);
+
+        JPanel controlPanel = new JPanel(new BorderLayout());
         bingoButton.setFont(new Font("Arial", Font.BOLD, 26));
         bingoButton.setBackground(Color.ORANGE);
         bingoButton.setFocusPainted(false);
         bingoButton.addActionListener(e -> handleBingoPress());
 
-        controlPanel.add(statusButton, BorderLayout.CENTER);
-        controlPanel.add(bingoButton, BorderLayout.EAST);
+        startOverButton.setFont(new Font("Arial", Font.BOLD, 22));
+        startOverButton.setBackground(Color.CYAN);
+        startOverButton.addActionListener(e -> resetGame());
+
+        rightPanel = new JPanel(new BorderLayout());
+        rightPanel.add(bingoButton, BorderLayout.CENTER);
+
+        controlPanel.add(statusPanel, BorderLayout.CENTER);
+        controlPanel.add(rightPanel, BorderLayout.EAST);
 
         add(boardPanel, BorderLayout.CENTER);
         add(controlPanel, BorderLayout.SOUTH);
-
-        // Start the auto-caller with selected interval
-        autoCaller = new Timer(interval, e -> callNumber());
-        autoCaller.setInitialDelay(0);
-        autoCaller.start();
 
         setVisible(true);
     }
@@ -86,17 +106,35 @@ public class BingoGame extends JFrame {
         return -1;
     }
 
-    private void initializeBoard(JPanel boardPanel) {
-        // Add column header buttons
-        for (int col = 0; col < SIZE; col++) {
-            JButton btn = new JButton(headers[col]);
-            btn.setFont(new Font("Arial", Font.BOLD, 26));
-            btn.setEnabled(false);
-            headerButtons[col] = btn;
-            boardPanel.add(btn);
+    private void resetGame() {
+        stopAllTimers();
+        closeAICardWindow();
+
+        gameOver = false;
+        aiHasBingo = false;
+        calledNumbers.clear();
+        lastCalledNumber = -1;
+        lastCalledLabel = "";
+
+        interval = promptForSpeed();
+        if (interval == -1) {
+            System.exit(0);
         }
 
-        // For each column, generate unique numbers within the Bingo range
+        resetPlayerBoard();
+        resetAIBoard();
+
+        setAllButtonsEnabled(false);
+        swapToBingoButton();
+
+        callStatusBar.setText("Waiting for first call...");
+        callStatusBar.setForeground(Color.BLACK);
+        countdownStatusBar.setText("");
+
+        startPreGameCountdown();
+    }
+
+    private void resetPlayerBoard() {
         List<Integer>[] columnNumbers = new ArrayList[SIZE];
         for (int col = 0; col < SIZE; col++) {
             columnNumbers[col] = new ArrayList<>();
@@ -104,69 +142,213 @@ public class BingoGame extends JFrame {
             for (int i = start; i < start + 15; i++) columnNumbers[col].add(i);
             Collections.shuffle(columnNumbers[col]);
         }
-
-        // Fill the board DOWN each column
         for (int row = 0; row < SIZE; row++) {
             for (int col = 0; col < SIZE; col++) {
-                JButton btn;
                 if (row == 2 && col == 2) {
-                    // Center free space
-                    btn = new JButton("FREE");
-                    btn.setBackground(Color.GREEN);
                     marked[row][col] = true;
                     numbers[row][col] = 0;
+                    buttons[row][col].setText("FREE");
+                    buttons[row][col].setBackground(Color.GREEN);
+                    buttons[row][col].setEnabled(false);
                 } else {
-                    int number = columnNumbers[col].remove(0);
-                    numbers[row][col] = number;
-                    btn = new JButton(String.valueOf(number));
+                    numbers[row][col] = columnNumbers[col].remove(0);
+                    marked[row][col] = false;
+                    buttons[row][col].setText(String.valueOf(numbers[row][col]));
+                    buttons[row][col].setBackground(null);
+                    buttons[row][col].setEnabled(true);
                 }
-                final int r = row, c = col;
+                buttons[row][col].setFont(new Font("Arial", Font.BOLD, 22));
+            }
+        }
+    }
+
+    private void resetAIBoard() {
+        List<Integer>[] columnNumbers = new ArrayList[SIZE];
+        for (int col = 0; col < SIZE; col++) {
+            columnNumbers[col] = new ArrayList<>();
+            int start = col * 15 + 1;
+            for (int i = start; i < start + 15; i++) columnNumbers[col].add(i);
+            Collections.shuffle(columnNumbers[col]);
+        }
+        for (int row = 0; row < SIZE; row++) {
+            for (int col = 0; col < SIZE; col++) {
+                if (row == 2 && col == 2) {
+                    aiNumbers[row][col] = 0;
+                    aiMarked[row][col] = true;
+                } else {
+                    aiNumbers[row][col] = columnNumbers[col].remove(0);
+                    aiMarked[row][col] = false;
+                }
+            }
+        }
+    }
+
+    private void setAllButtonsEnabled(boolean enabled) {
+        for (int i = 0; i < SIZE; i++) {
+            for (int j = 0; j < SIZE; j++) {
+                if (!(i == 2 && j == 2)) {
+                    buttons[i][j].setEnabled(enabled);
+                }
+            }
+        }
+    }
+
+    private void initializeBoard(JPanel boardPanel) {
+        for (int col = 0; col < SIZE; col++) {
+            JButton btn = new JButton(headers[col]);
+            btn.setFont(new Font("Arial", Font.BOLD, 26));
+            btn.setEnabled(false);
+            headerButtons[col] = btn;
+            boardPanel.add(btn);
+        }
+        for (int row = 0; row < SIZE; row++) {
+            for (int col = 0; col < SIZE; col++) {
+                JButton btn = new JButton("0");
                 btn.setFont(new Font("Arial", Font.BOLD, 22));
-                btn.setEnabled(!(row == 2 && col == 2));
-                btn.addActionListener(e -> handlePlayerMark(r, c));
                 buttons[row][col] = btn;
+                final int r = row, c = col;
+                btn.addActionListener(e -> handlePlayerMark(r, c));
                 boardPanel.add(btn);
             }
+        }
+    }
+
+    private void startPreGameCountdown() {
+        int[] preGameCountdownValue = {3};
+        callStatusBar.setText("Game starts in: " + preGameCountdownValue[0]);
+        callStatusBar.setForeground(Color.BLUE);
+        countdownStatusBar.setText("");
+
+        preGameCountdownTimer = new Timer(1000, null);
+        preGameCountdownTimer.addActionListener(e -> {
+            preGameCountdownValue[0]--;
+            if (preGameCountdownValue[0] > 0) {
+                callStatusBar.setText("Game starts in: " + preGameCountdownValue[0]);
+            } else {
+                preGameCountdownTimer.stop();
+                callStatusBar.setText("Game started!");
+                callStatusBar.setForeground(Color.BLACK);
+                setAllButtonsEnabled(true);
+                showAICardWindow();
+                startNumberCountdown();
+            }
+        });
+        preGameCountdownTimer.setInitialDelay(0);
+        preGameCountdownTimer.start();
+    }
+
+    private void startNumberCountdown() {
+        countdownValue = interval / 1000;
+        updateCountdownBar();
+        if (countdownTimer != null && countdownTimer.isRunning()) {
+            countdownTimer.stop();
+        }
+        countdownTimer = new Timer(1000, e -> {
+            if (gameOver) {
+                countdownTimer.stop();
+                return;
+            }
+            countdownValue--;
+            if (countdownValue > 0) {
+                updateCountdownBar();
+            } else {
+                countdownTimer.stop();
+                callNumber();
+                if (!gameOver) {
+                    startNumberCountdown();
+                }
+            }
+        });
+        countdownTimer.setInitialDelay(0);
+        countdownTimer.start();
+    }
+
+    private void updateCountdownBar() {
+        countdownStatusBar.setText("Next number in: " + countdownValue + "s");
+        countdownStatusBar.setForeground(Color.BLUE);
+    }
+
+    private void updateCallBar() {
+        if (lastCalledNumber != -1) {
+            callStatusBar.setText("Called: " + lastCalledLabel + " " + lastCalledNumber);
+            callStatusBar.setForeground(Color.BLACK);
+        }
+    }
+
+    private void showAICardWindow() {
+        if (aiCardFrame != null) {
+            aiCardFrame.dispose();
+        }
+        aiCardFrame = new JFrame("AI's Bingo Card");
+        aiCardFrame.setSize(250, 250);
+        aiCardFrame.setLayout(new GridLayout(SIZE, SIZE));
+        aiCardFrame.setAlwaysOnTop(true);
+        aiCardFrame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+
+        for (int i = 0; i < SIZE; i++) {
+            for (int j = 0; j < SIZE; j++) {
+                String txt = aiNumbers[i][j] == 0 ? "FREE" : String.valueOf(aiNumbers[i][j]);
+                aiCardLabels[i][j] = new JLabel(txt, SwingConstants.CENTER);
+                aiCardLabels[i][j].setOpaque(true);
+                aiCardLabels[i][j].setFont(new Font("Arial", Font.BOLD, 14));
+                aiCardLabels[i][j].setBackground(Color.WHITE);
+                aiCardFrame.add(aiCardLabels[i][j]);
+            }
+        }
+        updateAICardWindow();
+        aiCardFrame.setLocationRelativeTo(this);
+        aiCardFrame.setLocation(this.getX() + this.getWidth(), this.getY());
+        aiCardFrame.setVisible(true);
+    }
+
+    private void updateAICardWindow() {
+        if (aiCardLabels[0][0] == null) return;
+        for (int i = 0; i < SIZE; i++) {
+            for (int j = 0; j < SIZE; j++) {
+                if (aiMarked[i][j]) {
+                    aiCardLabels[i][j].setBackground(Color.BLUE);
+                    aiCardLabels[i][j].setForeground(Color.WHITE);
+                } else {
+                    aiCardLabels[i][j].setBackground(Color.WHITE);
+                    aiCardLabels[i][j].setForeground(Color.BLACK);
+                }
+                if (aiNumbers[i][j] == 0) {
+                    aiCardLabels[i][j].setBackground(Color.BLUE);
+                }
+                aiCardLabels[i][j].setText(aiNumbers[i][j] == 0 ? "FREE" : String.valueOf(aiNumbers[i][j]));
+            }
+        }
+    }
+
+    private void closeAICardWindow() {
+        if (aiCardFrame != null) {
+            aiCardFrame.dispose();
+            aiCardFrame = null;
         }
     }
 
     private void handlePlayerMark(int row, int col) {
         if (gameOver) return;
         int num = numbers[row][col];
-        if (num == 0) return; // Free space
+        if (num == 0) return;
 
-        // Check if marking a wrong number
         if (!calledNumbers.contains(num)) {
-            statusButton.setText("Wrong number! Game over.");
-            statusButton.setForeground(Color.RED);
-            autoCaller.stop();
-            gameOver = true;
-            disableAllButtons();
-            bingoButton.setEnabled(false);
+            endGame("Wrong number! Game over.", Color.RED);
             return;
         }
-
-        // Check if the user missed a previously called number (clicked an old called number instead of the most recent one)
         int lastCalled = getLastCalledNumber();
         if (num != lastCalled) {
-            statusButton.setText("Missed number! Game over.");
-            statusButton.setForeground(Color.ORANGE);
-            autoCaller.stop();
-            gameOver = true;
-            disableAllButtons();
-            bingoButton.setEnabled(false);
+            endGame("Missed number! Game over.", Color.ORANGE);
             return;
         }
-
         if (!marked[row][col]) {
             marked[row][col] = true;
             buttons[row][col].setBackground(Color.GREEN);
             buttons[row][col].setEnabled(false);
             buttons[row][col].setFont(new Font("Arial", Font.BOLD, 22));
             if (checkBingo()) {
-                statusButton.setText("You have BINGO! Press the BINGO button!");
-                statusButton.setForeground(new Color(0, 128, 0));
-                // Do not stop the timer, wait for player to press the bingo button
+                callStatusBar.setText("You have BINGO! Press the BINGO button!");
+                callStatusBar.setForeground(new Color(0, 128, 0));
             }
         }
     }
@@ -174,24 +356,39 @@ public class BingoGame extends JFrame {
     private void handleBingoPress() {
         if (gameOver) return;
         if (checkBingo()) {
-            statusButton.setText("BINGO! You won!");
-            statusButton.setForeground(new Color(0, 128, 0));
-            autoCaller.stop();
-            gameOver = true;
-            disableAllButtons();
-            bingoButton.setEnabled(false);
+            endGame("BINGO! You won!", new Color(0, 128, 0));
         } else {
-            statusButton.setText("False BINGO! Game over.");
-            statusButton.setForeground(Color.RED);
-            autoCaller.stop();
-            gameOver = true;
-            disableAllButtons();
-            bingoButton.setEnabled(false);
+            endGame("False BINGO! Game over.", Color.RED);
         }
     }
 
+    private void endGame(String msg, Color color) {
+        callStatusBar.setText(msg);
+        callStatusBar.setForeground(color);
+        countdownStatusBar.setText("");
+        stopAllTimers();
+        gameOver = true;
+        setAllButtonsEnabled(false);
+        swapToStartOverButton();
+        closeAICardWindow();
+    }
+
+    private void swapToBingoButton() {
+        rightPanel.removeAll();
+        rightPanel.add(bingoButton, BorderLayout.CENTER);
+        rightPanel.revalidate();
+        rightPanel.repaint();
+        bingoButton.setEnabled(true);
+    }
+
+    private void swapToStartOverButton() {
+        rightPanel.removeAll();
+        rightPanel.add(startOverButton, BorderLayout.CENTER);
+        rightPanel.revalidate();
+        rightPanel.repaint();
+    }
+
     private int getLastCalledNumber() {
-        // Only the latest called number is enabled at this point
         for (int i = 0; i < SIZE; i++)
             for (int j = 0; j < SIZE; j++)
                 if (calledNumbers.contains(numbers[i][j]) && numbers[i][j] != 0 && !marked[i][j])
@@ -199,21 +396,10 @@ public class BingoGame extends JFrame {
         return -1;
     }
 
-    private void disableAllButtons() {
-        for (int i = 0; i < SIZE; i++)
-            for (int j = 0; j < SIZE; j++)
-                buttons[i][j].setEnabled(false);
-    }
-
     private void callNumber() {
         if (gameOver) return;
         if (calledNumbers.size() >= 75) {
-            statusButton.setText("All numbers have been called! Game over.");
-            statusButton.setForeground(Color.BLACK);
-            autoCaller.stop();
-            gameOver = true;
-            disableAllButtons();
-            bingoButton.setEnabled(false);
+            endGame("All numbers have been called! Game over.", Color.BLACK);
             return;
         }
         int num;
@@ -222,12 +408,10 @@ public class BingoGame extends JFrame {
         } while (calledNumbers.contains(num));
         calledNumbers.add(num);
 
-        String colLabel = headers[(num - 1) / 15];
-        statusButton.setText("Called: " + colLabel + " " + num);
-        statusButton.setFont(new Font("Arial", Font.BOLD, 36));
-        statusButton.setForeground(Color.BLACK);
+        lastCalledNumber = num;
+        lastCalledLabel = headers[(num - 1) / 15];
+        updateCallBar();
 
-        // Reset all unmarked buttons to normal font & enable them (except FREE)
         for (int i = 0; i < SIZE; i++) {
             for (int j = 0; j < SIZE; j++) {
                 if (numbers[i][j] != 0 && !marked[i][j]) {
@@ -236,30 +420,66 @@ public class BingoGame extends JFrame {
                 }
             }
         }
+        for (int i = 0; i < SIZE; i++) {
+            for (int j = 0; j < SIZE; j++) {
+                if (aiNumbers[i][j] == num) {
+                    aiMarked[i][j] = true;
+                }
+            }
+        }
+        updateAICardWindow();
+
+        if (!aiHasBingo && checkAIBingo()) {
+            aiHasBingo = true;
+            endGame("AI got BINGO! You lose.", Color.RED);
+        }
     }
 
     private boolean checkBingo() {
-        // Check rows
         for (int i = 0; i < SIZE; i++) {
             boolean row = true;
             for (int j = 0; j < SIZE; j++)
                 if (!marked[i][j]) row = false;
             if (row) return true;
         }
-        // Check columns
         for (int j = 0; j < SIZE; j++) {
             boolean col = true;
             for (int i = 0; i < SIZE; i++)
                 if (!marked[i][j]) col = false;
             if (col) return true;
         }
-        // Check diagonals
         boolean diag1 = true, diag2 = true;
         for (int i = 0; i < SIZE; i++) {
             if (!marked[i][i]) diag1 = false;
             if (!marked[i][SIZE - 1 - i]) diag2 = false;
         }
         return diag1 || diag2;
+    }
+
+    private boolean checkAIBingo() {
+        for (int i = 0; i < SIZE; i++) {
+            boolean row = true;
+            for (int j = 0; j < SIZE; j++)
+                if (!aiMarked[i][j]) row = false;
+            if (row) return true;
+        }
+        for (int j = 0; j < SIZE; j++) {
+            boolean col = true;
+            for (int i = 0; i < SIZE; i++)
+                if (!aiMarked[i][j]) col = false;
+            if (col) return true;
+        }
+        boolean diag1 = true, diag2 = true;
+        for (int i = 0; i < SIZE; i++) {
+            if (!aiMarked[i][i]) diag1 = false;
+            if (!aiMarked[i][SIZE - 1 - i]) diag2 = false;
+        }
+        return diag1 || diag2;
+    }
+
+    private void stopAllTimers() {
+        if (countdownTimer != null) countdownTimer.stop();
+        if (preGameCountdownTimer != null) preGameCountdownTimer.stop();
     }
 
     public static void main(String[] args) {
