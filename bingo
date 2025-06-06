@@ -197,6 +197,7 @@ public class BingoGame extends JFrame {
         for (int col = 0; col < SIZE; col++) {
             JButton btn = new JButton(headers[col]);
             btn.setFont(new Font("Arial", Font.BOLD, 26));
+            btn.setBackground(Color.CYAN);
             btn.setEnabled(false);
             headerButtons[col] = btn;
             boardPanel.add(btn);
